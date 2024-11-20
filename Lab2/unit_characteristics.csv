@@ -1,0 +1,4 @@
+name,attack_infantry,attack_cavalry,attack_ranged,defense_infantry,defense_cavalry,defense_ranged
+Infantry,5,3,2,4,2,3
+Cavalry,6,5,2,3,4,1
+Archers,2,1,5,1,1,4
