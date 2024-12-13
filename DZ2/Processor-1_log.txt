@@ -1,0 +1,10 @@
+=== Logs for Processor-1 ===
+Task 2 assigned to Core Core-0.
+Task 3 assigned to Core Core-1.
+Core Core-0 is executing Task 2. Remaining operations: 10.
+Task 2 completed successfully on Core Core-0 of Processor Processor-1.
+Core Core-1 is executing Task 3. Remaining operations: 66.
+Task 3 did not complete on Core Core-1 of Processor Processor-1. Requeuing.
+Task 3 assigned to Core Core-0.
+Core Core-0 is executing Task 3. Remaining operations: 41.0.
+Task 3 did not complete on Core Core-0 of Processor Processor-1. Requeuing.
