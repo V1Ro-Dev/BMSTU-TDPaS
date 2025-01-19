@@ -4,6 +4,19 @@ import time
 import threading
 from queue import PriorityQueue
 from datetime import datetime
+import logging
+
+import matplotlib
+
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+
+# Настройка логирования
+logging.basicConfig(
+    filename='simulation.log',
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 
 
 class Task:  # класс задачи
@@ -12,42 +25,52 @@ class Task:  # класс задачи
     STATUS_BLOCKED = "Blocked"
     STATUS_DONE = "Done"
 
-    def __init__(self, task_id: int, priority: int, operations: int, size: int):
+    def __init__(self, task_id: int, priority: int, operations: int, size: int, ttl: int):
         self.id = task_id  # id задачи
         self.priority = priority  # приоритет задачи
         self.operations = operations  # количество операций
         self.size_bits = size  # размер задачи в битах
-        self.queued_time = None # время, в течение которого
+        self.queued_time = None  # время, в течение которого задача находилась в очереди
         self.status = Task.STATUS_READY  # начальный статус задачи
+        self.ttl = ttl  # ttl одной задачи
+
+    def reduce_operations(self,
+                          completed_operations: int):  # метод для уменьшения количества операций, необходимых для выполнения задачи
+        self.operations -= completed_operations
+        if self.operations <= 0:
+            self.operations = 0
+            self.status = Task.STATUS_DONE
 
     def __lt__(self, other: 'Task') -> bool:  # определяем оператор < для сравнения задач по приоритету
         return self.priority > other.priority  # чем меньше приоритет, тем важнее задача
 
     def __str__(self):
-        return f"Task(id={self.id}, priority={self.priority}, size={self.size_bits}, operations={self.operations}, status={self.status})"
+        return f"Task(id={self.id}, priority={self.priority}, size={self.size_bits}, operations={self.operations}, status={self.status})"  # переопределение метода __str__, чтобы выводить информацию по задаче
 
     @staticmethod
     def generate_random_task(task_id: int, max_task_size_bits: int) -> 'Task':
         task_size_bits = random.randint(1, max_task_size_bits)  # размер задачи в битах
-        operations_needed = random.randint(1, 100)  # количество операций для выполнения задачи
+        operations_needed = random.randint(10 ** 6, 10 ** 7)  # количество операций для выполнения задачи
         priority = random.randint(1, 10)  # приоритет задачи
+        ttl = 10 ** 6
         return Task(
             task_id=task_id,
             priority=priority,
             operations=operations_needed,
-            size=task_size_bits
+            size=task_size_bits,
+            ttl=ttl
         )
 
 
-class EthFrame:  # Ethernet Frame
+class EthFrame:  # класс кадра
     def __init__(self, frame_id: int, tasks: List[Task], bandwidth: int):
-        self.frame_id = frame_id
-        self.tasks = tasks
-        self.total_size = sum(task.size_bits for task in tasks)
+        self.frame_id = frame_id  # id кадра
+        self.tasks = tasks  # список задач в кадре
+        self.total_size = sum(task.size_bits for task in tasks)  # размер кадра
 
     def __str__(self):
         task_ids = [task.id for task in self.tasks]
-        return f"Кадр с id {self.frame_id}, c количеством задач {len(task_ids)}, и размером {self.total_size} бит успешно созда н"
+        return f"Frame ID {self.frame_id}, tasks: {len(task_ids)}, size: {self.total_size} bits"
 
 
 class IEEE8023ba:  # реализация стандарта IEEE P802.3ba
@@ -55,7 +78,8 @@ class IEEE8023ba:  # реализация стандарта IEEE P802.3ba
         self.max_frame_size_bits = max_frame_size_bits  # максимальный размер кадра
         self.bandwidth = bandwidth  # пропускная способность канала
 
-    def group_tasks_into_frames(self, tasks: List[Task]) -> List[EthFrame]:  # метод, отвечающий за группировку задач в кадры
+    def group_tasks_into_frames(self, tasks: List[Task]) -> List[
+        EthFrame]:  # метод, отвечающий за группировку задач в кадры
         frames = []
         frame_id = 0
         current_frame_tasks = []
@@ -75,9 +99,9 @@ class IEEE8023ba:  # реализация стандарта IEEE P802.3ba
             frames.append(EthFrame(frame_id, current_frame_tasks, self.bandwidth))
 
         for frame in frames:
-            print(frame)
+            logging.info(frame)
 
-        print(f"Сформировано {len(frames)} кадров из {len(tasks)} задач.")
+        logging.info(f"Created {len(frames)} frames from {len(tasks)} tasks.")
         return frames
 
 
@@ -104,37 +128,44 @@ class Memory:  # класс для эмуляции памяти
 class CoreProcessor:  # ядро процессора
     def __init__(self, core_id: int, processor_id: int):
         self.core_id = core_id
-        self.processor_id = processor_id
-        self.is_busy = False
+        self.processor_id = processor_id  # id процессора
+        self.is_busy = False  # занято ли ядро в данный момент
+        self.total_busy_time = 0  # время работы ядра
+        self.lock = threading.Lock()  # блокировка ядра
 
     def execute_task(self, task: Task, cpu_clock_hz: int):
-        self.is_busy = True
-        task.status = Task.STATUS_RUNNING  #меняем статус на "running"
-        start_time = datetime.now()
-        print(f"Processor {self.processor_id} Core {self.core_id} начал выполнение задачи {task.id} "
-              f"(приоритет: {task.priority}, статус: {task.status}).")
+        with self.lock:
+            self.is_busy = True  #меняем статус на занято
+            task.status = Task.STATUS_RUNNING  #меняем статус на "running"
 
-        execution_time = task.operations / cpu_clock_hz  # время выполнения = количество операций / тактовая частота
-        time.sleep(execution_time) #эмуляция выполнения задачи
+            logging.info(
+                f"Processor {self.processor_id} Core {self.core_id} started task {task.id} (priority: {task.priority}, status: {task.status}).")  # логируем информацию по взятию задачи в обработку
 
-        queued_time = (start_time - task.queued_time).total_seconds()  #время нахождения в очереди = время после выполнения - время, когда задача была добавлена в очередь
-        task.status = Task.STATUS_DONE  # обновляем статус после выполнения
-        print(f"Processor {self.processor_id} Core {self.core_id} завершил задачу {task.id} "
-              f"за {execution_time:} секунд. Время в очереди: {queued_time:} секунд. Статус задачи: {task.status}.")
-        self.is_busy = False
+            completed_operations = min(task.ttl, task.operations)  # количество выполненных оперций
+            execution_time = completed_operations / cpu_clock_hz  # время выполнения операций
+            time.sleep(execution_time)  # симуляция выполнения задачи
+
+            task.reduce_operations(completed_operations)
+
+            if task.operations > 0:
+                logging.warning(
+                    f"Processor {self.processor_id} Core {self.core_id} paused task {task.id} (remaining operations: {task.operations}).")
+                task.status = Task.STATUS_READY
+            else:
+                logging.info(
+                    f"Processor {self.processor_id} Core {self.core_id} completed task {task.id}. Status: {task.status}.")
+
+            self.total_busy_time += execution_time  # добавляем время, в течение которого работал процессор
+            self.is_busy = False  # меняем статус на свободно
 
 
 class Processor:  # процессор с несколькими ядрами
     def __init__(self, processor_id: int, num_cores: int):
-        self.processor_id = processor_id  # id процессора
-        self.cores = [CoreProcessor(i, processor_id) for i in range(num_cores)]  # ядра процессора
+        self.processor_id = processor_id  #id процессора
+        self.cores = [CoreProcessor(i, processor_id) for i in range(num_cores)]  # список ядер
 
-    def assign_task(self, task: Task, cpu_clock_hz: int):
-        for core in self.cores:
-            if not core.is_busy:  # если процессор не занят, начинаем исполнение задачи
-                threading.Thread(target=core.execute_task, args=(task, cpu_clock_hz)).start()
-                return True
-        return False  # все ядра заняты
+    def get_total_busy_time(self):  # метод, возвращающий суммарное время работы процессора
+        return sum(core.total_busy_time for core in self.cores)
 
 
 class RTOS:  # планировщик задач
@@ -144,58 +175,94 @@ class RTOS:  # планировщик задач
         self.memory = memory  # память, в которой хранятся задачи
         self.ieee = ieee  # стандарт передачи
         self.cpu_clock_hz = cpu_clock_hz  # тактовая частота процессора
+        self.lock = threading.Lock()
 
     def load_tasks_from_memory(self, data_bandwidth):
         tasks = list(self.memory.ram.values())  # загружаем задачи из памяти
         self.memory.clear_memory()  # очищаем память
         frames = self.ieee.group_tasks_into_frames(tasks)  # группируем задачи по кадрам
         transmission_size = 0
+
         for frame in frames:
-            print(f"Кадр {frame.frame_id} передан в планировщик.")
+            logging.info(f"Frame {frame.frame_id} sent to scheduler.")
             transmission_size += frame.total_size
 
-        print('Время, затраченное на передачу кадров: ',
-              transmission_size / data_bandwidth)  # рассчитываем время передачи кадров
+        logging.info(f"Transmission time: {transmission_size / data_bandwidth} seconds.")
 
         for frame in frames:
             for task in frame.tasks:
                 task.queued_time = datetime.now()
                 task.status = Task.STATUS_READY  # статус задачи становится "Готова к исполнению"
                 self.task_queue.put((task.priority, task))
-                print(f"Задача {task.id} (приоритет: {task.priority}, статус: {task.status}) добавлена в очередь.")
+                logging.info(f"Task {task.id} added to queue (priority: {task.priority}, status: {task.status}).")
 
-    def distribute_tasks(self):  #метод, распределяющий задачи по процессорам
+    def assign_task_to_core(self, core: CoreProcessor):  # метод, присваивающий задачу ядру
+        with self.lock:
+            if self.task_queue.empty():  # если очередь пуста, то выходим
+                return
+            _, task = self.task_queue.get()  # достаем задачу
+
+        task.status = Task.STATUS_RUNNING  # меняем статус на "running"
+        core_thread = threading.Thread(target=core.execute_task, args=(
+        task, self.cpu_clock_hz))  # создаем поток для задачи и начинаем ее исполненение
+        core_thread.start()
+        core_thread.join()
+
+        if task.operations > 0:
+            with self.lock:
+                self.task_queue.put((task.priority, task))
+
+    def distribute_tasks(self):  # метод, распределяющий задачи по процессорам и ядрам
+        self.processors = sorted(self.processors,
+                                 key=lambda x: x.get_total_busy_time())  # сортируем процессоры по времени занятости
         while not self.task_queue.empty():
-            _, task = self.task_queue.get()
-            if random.random() < 0.1:  # эмуляция того, что задача может быть заблокирована (подробнее написано в ДЗ)
-                task.status = Task.STATUS_BLOCKED
-                print(f"Задача {task.id} заблокирована. Статус: {task.status}.")
-                time.sleep(1)
-                task.status = Task.STATUS_READY
-                self.task_queue.put((task.priority, task))
-                continue
+            threads = []
 
-            assigned = False
-            for processor in self.processors:
-                if processor.assign_task(task, self.cpu_clock_hz):
-                    assigned = True
-                    break
+            for processor in self.processors:  # итерируемся по процессорам
+                for core in processor.cores:  # итерируемся по ядрам конкретного процессора
+                    if not core.is_busy:
+                        core_thread = threading.Thread(target=self.assign_task_to_core, args=(
+                        core,))  # если ядро свободно, то выделяем ей поток и присваиваем ее к ядру
+                        threads.append(core_thread)
+                        core_thread.start()
 
-            if not assigned:  #если задача не была передана процессору, то она остается в очереди
-                task.status = Task.STATUS_READY
-                print(f"Все ядра заняты. Задача {task.id} возвращена в очередь. Статус: {task.status}.")
-                self.task_queue.put((task.priority, task))
+            for thread in threads:
+                thread.join()
+
+
+def plot_processor_load(processors, simulation_index):  # функция для построения гистограмм
+
+    processor_ids = [processor.processor_id for processor in processors]
+    busy_times = [processor.get_total_busy_time() for processor in processors]
+
+    plt.bar(processor_ids, busy_times, color='skyblue')
+    plt.xlabel('Processor ID')
+    plt.ylabel('Total Busy Time (s)')
+    plt.title(f'Processor Load Distribution - Simulation {simulation_index + 1}')
+
+    # Устанавливаем целочисленные значения для оси X
+    plt.xticks(ticks=range(len(processor_ids)), labels=[str(pid) for pid in processor_ids])
+
+    # Добавляем подписи значений к каждому столбцу
+    for i, value in enumerate(busy_times):
+        plt.text(i, value, f'{value:.4f}', ha='center', va='bottom', fontsize=10)
+
+    plt.gcf().subplots_adjust(top=0.8, bottom=0.25)
+
+    filename = f"processor_load_distribution_simulation_{simulation_index + 1}.png"
+    plt.savefig(filename)
+    plt.close()
+    print(f"График сохранён как '{filename}'")
 
 
 def main():
-    # Configurable constants
-    cpu_clock_hz = 2.5 * 10 ** 9  # тактовая частота процессора XuanTie-C910 2.5ГГц
-    data_bandwidth = 100 * 10 ** 9  # канал передачи данных со скоростью 100гбит/cек
-    eth_frame_size_bits = 1500 * 8  # размер кадра ethernet
-    max_task_size_bits = 128  # максимальный размер задачи
-    processors_count = 4  # количество процессоров для эмуляции многопроцессорной обработки
-    cores_per_processor = 3  # количество ядер у одного процессора
-    tasks_count = 20  # количество задач, которое необходимо выполнить
+    cpu_clock_hz = 1 * 10 ** 9 # тактовая частота процессора
+    data_bandwidth = 100 * 10 ** 9 # канал передачи данных со скоростью 100гбит/cек
+    eth_frame_size_bits = 1500 * 8 # размер кадра ethernet
+    max_task_size_bits = 64 # максимальный размер задачи
+    processors_count = 4 # количество процессоров для эмуляции многопроцессорной обработки
+    cores_per_processor = 8 # количество ядер у одного процессора
+    tasks_count = 100 # количество задач, которое необходимо выполнить
 
     memory = Memory()
     ieee = IEEE8023ba(eth_frame_size_bits, data_bandwidth)
@@ -208,6 +275,7 @@ def main():
 
     planner.load_tasks_from_memory(data_bandwidth)
     planner.distribute_tasks()
+    plot_processor_load(processors)
 
 
 if __name__ == "__main__":

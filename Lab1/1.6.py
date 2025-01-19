@@ -7,9 +7,6 @@ def solution(num, num2):
     return f'sum = {num + num2} mul = {num * num2} diff = {num - num2}'
 
 
-
-
-
 num = int(input())
 num2 = int(input())
 print(solution(num, num2))

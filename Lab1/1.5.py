@@ -15,8 +15,5 @@ def solution(num):
     return ans
 
 
-
-
-
 num = int(input())
 print(solution(num))
